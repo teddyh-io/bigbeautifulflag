@@ -1,0 +1,8 @@
+truthbrush>=0.2.5
+pyserial>=3.5
+readchar>=4.0
+python-dateutil>=2.8
+python-dotenv>=1.0
+Pillow>=10
+numpy>=1.24
+adafruit-blinka-raspberry-pi5-piomatter>=0.3

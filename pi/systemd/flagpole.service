@@ -1,0 +1,18 @@
+[Unit]
+Description=Truth Social Flagpole
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/flagpole.env
+WorkingDirectory=/home/pi/flagpole/pi
+ExecStart=/home/pi/flagpole/pi/.venv/bin/python /home/pi/flagpole/pi/flagpole.py
+Restart=on-failure
+RestartSec=5
+# The Piomatter library pokes PIO registers directly; needs root.
+# If running under a non-root user, grant cap_sys_rawio + cap_sys_nice instead.
+User=root
+
+[Install]
+WantedBy=multi-user.target

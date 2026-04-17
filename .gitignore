@@ -1,0 +1,21 @@
+# Secrets — never commit the real /etc/flagpole.env copy.
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PIL caches generated from fonts/tom-thumb.bdf on first run.
+pi/fonts/tom-thumb.pil
+pi/fonts/tom-thumb.pbm
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/
