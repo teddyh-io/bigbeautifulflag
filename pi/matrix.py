@@ -2,9 +2,10 @@
 
 Renders the body of the latest post to a 64x32 HUB75 RGB matrix driven by a
 Raspberry Pi 5 through the Adafruit Blinka Piomatter library, using the
-`tom-thumb.bdf` 4x6 pixel font.  Short bodies are displayed statically.
-Longer bodies are rendered to a tall offscreen image and scrolled vertically
-with pauses at the top and bottom.
+`tom-thumb.bdf` 4x6 pixel font.  Text is confined to a 62x30 inner region,
+leaving a 1px black border on all sides of the panel.  Short bodies are
+displayed statically; longer bodies are rendered to a tall offscreen image
+and scrolled vertically with pauses at the top and bottom.
 """
 
 from __future__ import annotations
@@ -27,15 +28,18 @@ FONT_PATH = Path(__file__).with_name("fonts") / "tom-thumb.bdf"
 
 MATRIX_W = 64
 MATRIX_H = 32
+MARGIN = 1        # 1px border on each side -> 62x30 usable text area
+TEXT_W = MATRIX_W - 2 * MARGIN   # 62
+TEXT_H = MATRIX_H - 2 * MARGIN   # 30
 CHAR_W = 4        # tom-thumb cell width
 LINE_H = 6        # tom-thumb cell height
-TEXT_COLS = MATRIX_W // CHAR_W   # 16
-BODY_COLOR = (255, 255, 255)
+TEXT_COLS = TEXT_W // CHAR_W     # 15
+BODY_COLOR = (255, 0, 0)
 BG_COLOR = (0, 0, 0)
 
 # Scroll tuning
-SCROLL_STEP_MS = 80
-PAUSE_MS = 1500
+SCROLL_STEP_MS = 320
+PAUSE_MS = 5000
 FRAME_SLEEP = 0.02  # 50 Hz render loop
 
 
@@ -125,10 +129,10 @@ def wrap_body(text: str, cols: int = TEXT_COLS) -> list[str]:
 
 
 def render_body_image(text: str, font: ImageFont.ImageFont) -> Image.Image:
-    """Render cleaned post body into a 64 x H image (H >= MATRIX_H)."""
+    """Render cleaned post body into a TEXT_W x H image (H >= TEXT_H)."""
     lines = wrap_body(text) if text else ["(no post)"]
-    height = max(MATRIX_H, len(lines) * LINE_H)
-    img = Image.new("RGB", (MATRIX_W, height), BG_COLOR)
+    height = max(TEXT_H, len(lines) * LINE_H)
+    img = Image.new("RGB", (TEXT_W, height), BG_COLOR)
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(lines):
         draw.text((0, i * LINE_H), line, font=font, fill=BODY_COLOR)
@@ -214,14 +218,19 @@ class MatrixScroller:
                     pause_until = now + PAUSE_MS / 1000.0
                     self._dirty = False
 
-            max_offset = max(0, img.height - MATRIX_H)
+            max_offset = max(0, img.height - TEXT_H)
 
             if max_offset == 0:
                 window = img
             else:
-                window = img.crop((0, y_offset, MATRIX_W, y_offset + MATRIX_H))
+                window = img.crop((0, y_offset, TEXT_W, y_offset + TEXT_H))
 
-            self._framebuffer[:] = np.asarray(window, dtype=np.uint8)
+            self._framebuffer[:] = 0
+            self._framebuffer[
+                MARGIN:MARGIN + TEXT_H,
+                MARGIN:MARGIN + TEXT_W,
+                :,
+            ] = np.asarray(window, dtype=np.uint8)
             self._matrix.show()
 
             if max_offset > 0:
