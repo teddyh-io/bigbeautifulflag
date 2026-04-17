@@ -15,6 +15,7 @@ import re
 import textwrap
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import numpy as np
@@ -57,7 +58,46 @@ def _load_font() -> ImageFont.ImageFont:
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
-_WS_RE = re.compile(r"\s+")
+_WS_RE = re.compile(r"[ \t\r\f\v]+")
+
+# PIL's BdfFontFile loader only keeps the first 256 codepoints, so the
+# tom-thumb font can only render Latin-1. Map common smart-punctuation
+# and symbols to ASCII, then drop anything else (emojis, non-Latin scripts).
+_SMART_PUNCT = str.maketrans({
+    "\u2018": "'",   # left single quote
+    "\u2019": "'",   # right single quote / apostrophe
+    "\u201A": ",",   # single low-9 quote
+    "\u201B": "'",
+    "\u201C": '"',   # left double quote
+    "\u201D": '"',   # right double quote
+    "\u201E": '"',   # double low-9 quote
+    "\u2032": "'",   # prime
+    "\u2033": '"',   # double prime
+    "\u2013": "-",   # en dash
+    "\u2014": "-",   # em dash
+    "\u2015": "-",   # horizontal bar
+    "\u2026": "...", # ellipsis
+    "\u00A0": " ",   # non-breaking space
+    "\u2022": "*",   # bullet
+    "\u00B7": "*",   # middle dot
+    "\u00AB": '"',
+    "\u00BB": '"',
+})
+
+
+def _sanitize(text: str) -> str:
+    """Reduce text to what the tom-thumb PIL bitmap font can actually render.
+
+    Smart punctuation is mapped to ASCII, accented letters are stripped to
+    their base form, and anything still outside printable ASCII (emojis,
+    CJK, etc.) is dropped.
+    """
+    text = text.translate(_SMART_PUNCT)
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(
+        ch for ch in text
+        if ch == "\n" or ch == " " or (ch.isprintable() and ord(ch) < 128)
+    )
 
 
 def clean_body(raw: str) -> str:
@@ -68,6 +108,7 @@ def clean_body(raw: str) -> str:
     text = raw.replace("</p>", "\n").replace("<br>", "\n").replace("<br/>", "\n")
     text = _TAG_RE.sub("", text)
     text = html.unescape(text)
+    text = _sanitize(text)
     lines = [_WS_RE.sub(" ", ln).strip() for ln in text.splitlines()]
     return "\n".join(ln for ln in lines if ln)
 
