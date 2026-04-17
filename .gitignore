@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+bbf-venv/
 
 # PIL caches generated from fonts/tom-thumb.bdf on first run.
 pi/fonts/tom-thumb.pil

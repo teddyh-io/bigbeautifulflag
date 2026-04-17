@@ -6,12 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/flagpole.env
-WorkingDirectory=/home/pi/flagpole/pi
-ExecStart=/home/pi/flagpole/pi/.venv/bin/python /home/pi/flagpole/pi/flagpole.py
+WorkingDirectory=/home/teddyh/bigbeautifulflag/pi
+ExecStart=/home/teddyh/bigbeautifulflag/pi/bbf-venv/bin/python /home/teddyh/bigbeautifulflag/pi/flagpole.py
 Restart=on-failure
 RestartSec=5
-# The Piomatter library pokes PIO registers directly; needs root.
-# If running under a non-root user, grant cap_sys_rawio + cap_sys_nice instead.
+# Piomatter pokes PIO registers directly; it needs either root or the
+# cap_sys_rawio capability on the python binary. Running as root is simplest.
 User=root
 
 [Install]

@@ -30,7 +30,7 @@ pi/
   fonts/
     tom-thumb.bdf      # MIT-licensed 4x6 pixel font
   systemd/
-    flagpole.service   # systemd unit (points at /home/pi/flagpole/pi)
+    flagpole.service   # systemd unit (points at /home/teddyh/bigbeautifulflag/pi)
   requirements.txt
   .env.example
 
@@ -40,7 +40,7 @@ README.md
 ```
 
 Everything above is tracked in git except what `.gitignore` excludes:
-`.env` (secrets), `__pycache__/`, `.venv/`, the PIL cache built from the
+`.env` (secrets), `__pycache__/`, `bbf-venv/`, the PIL cache built from the
 BDF font on first run, and editor/OS cruft.
 
 ## Hardware
@@ -100,14 +100,20 @@ firmware re-flashes (EEPROM layout is preserved from the original sketch).
 
 Target: Raspberry Pi 5 running Raspberry Pi OS Bookworm 64-bit.
 
-1. Clone this repo to `/home/pi/flagpole` (so the Python code lives at
-   `/home/pi/flagpole/pi`).
-2. Create a virtualenv **inside `pi/`** and install deps:
+This repo is expected to be cloned at `/home/teddyh/bigbeautifulflag/` with
+a virtualenv named `bbf-venv/` inside the `pi/` subfolder. If you put it
+somewhere else (or name the venv differently), edit
+[`pi/systemd/flagpole.service`](pi/systemd/flagpole.service) to match before
+installing the service unit.
+
+1. Clone this repo to `/home/teddyh/bigbeautifulflag` (so the Python code
+   lives at `/home/teddyh/bigbeautifulflag/pi`).
+2. Create the virtualenv **inside `pi/`** and install deps:
 
    ```bash
-   cd /home/pi/flagpole/pi
-   python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
+   cd ~/bigbeautifulflag/pi
+   python3 -m venv bbf-venv
+   bbf-venv/bin/pip install -r requirements.txt
    ```
 
    Piomatter on Pi 5 is a separate wheel; if `pip` can't find it, follow the
@@ -120,12 +126,22 @@ Target: Raspberry Pi 5 running Raspberry Pi OS Bookworm 64-bit.
 
 ## Calibration
 
-The Pi service holds the serial port exclusively, so stop it first:
+Run this once to set the motor's LOW/HIGH endpoints. The Uno persists the
+result in EEPROM, so you only redo it after mechanical changes.
+
+```bash
+# First run (before the service is installed) — nothing to stop.
+cd ~/bigbeautifulflag/pi
+bbf-venv/bin/python calibrate.py --port /dev/ttyACM0
+```
+
+After the systemd unit is installed, the service owns the serial port
+exclusively, so stop it first and start it again when done:
 
 ```bash
 sudo systemctl stop flagpole.service
-cd /home/pi/flagpole/pi
-.venv/bin/python calibrate.py --port /dev/ttyACM0
+cd ~/bigbeautifulflag/pi
+bbf-venv/bin/python calibrate.py --port /dev/ttyACM0
 sudo systemctl start flagpole.service
 ```
 
@@ -144,7 +160,11 @@ Keys:
 
 ## systemd
 
+Install the service so the flagpole starts on boot and restarts on crash.
+
 ```bash
+cd ~/bigbeautifulflag
+
 # Secrets (not tracked in git)
 sudo cp pi/.env.example /etc/flagpole.env
 sudo chmod 600 /etc/flagpole.env
@@ -157,9 +177,19 @@ sudo systemctl enable --now flagpole.service
 journalctl -u flagpole.service -f
 ```
 
-The unit runs as `root` because Piomatter needs raw PIO access. If you
-prefer a non-root user, grant `cap_sys_rawio+ep` to the python binary and
-drop the `User=root` line in `pi/systemd/flagpole.service`.
+Useful service commands once it's installed:
+
+```bash
+sudo systemctl stop    flagpole.service   # stop (e.g. before calibrating)
+sudo systemctl start   flagpole.service   # start again
+sudo systemctl restart flagpole.service   # after editing code or the unit file
+sudo systemctl status  flagpole.service   # quick health check
+journalctl -u flagpole.service -n 100     # recent logs
+```
+
+The unit runs as `root` because Piomatter needs raw PIO access on the Pi 5.
+If you prefer a non-root user, grant `cap_sys_rawio+ep` to the python
+binary and change the `User=` line in `pi/systemd/flagpole.service`.
 
 ## Configuration
 
