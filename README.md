@@ -27,7 +27,7 @@ arduino/
 pi/
   flagpole.py          # main systemd service
   calibrate.py         # standalone interactive calibration over SSH
-  dev.py               # browser-based dev/demo (no hardware, no Truth Social)
+  dev.py               # fake-post dev / demo mode (no Truth Social)
   matrix.py            # Piomatter + tom-thumb BDF scroller
   arduino.py           # serial protocol wrapper for the Uno
   truth.py             # polling + percent/countdown math
@@ -36,7 +36,6 @@ pi/
   systemd/
     flagpole.service   # systemd unit (points at /home/teddyh/bigbeautifulflag/pi)
   requirements.txt
-  requirements-dev.txt # deps for dev.py (no piomatter, no truthbrush)
   .env.example
 
 TWEET/
@@ -170,36 +169,35 @@ Keys:
 
 ## Dev / demo mode
 
-[`pi/dev.py`](pi/dev.py) runs the full service (matrix scroller + fetch loop +
-tick loop + flag-percent math) with three in-process fakes swapped in for the
-hardware-touching parts — no Pi, no Arduino, no Truth Social account needed.
-It serves a small browser UI on `http://localhost:8765/` that shows:
+[`pi/dev.py`](pi/dev.py) runs the same motor + matrix + countdown pipeline
+as the real service, but takes fake posts from stdin instead of polling
+Truth Social. Useful for demoing the rig or debugging hardware without
+waiting for @realdonaldtrump to post.
 
-- The 64×32 matrix scaled up (rendered from the same numpy framebuffer the
-  real Piomatter backend would paint).
-- A flagpole graphic animating up/down as the motor percent changes.
-- The two 7-seg displays (flag %, next-step countdown).
-- A live log of the `G` / `P` / `T` commands the service would send the Uno.
-- A form to "post" a new truth, with an "Age (min)" field so you can jump
-  straight to e.g. 100% without waiting 5h30m, and a "Rewind 30 min" button
-  that bumps the flag up one step instantly.
+Like calibration, it owns the serial port and the matrix exclusively, so
+stop the service first:
 
 ```bash
-cd pi
-python3 -m venv bbf-venv
-bbf-venv/bin/pip install -r requirements-dev.txt
-bbf-venv/bin/python dev.py           # opens http://localhost:8765/
-bbf-venv/bin/python dev.py --help    # --port / --host / --no-browser / --interval
+sudo systemctl stop flagpole.service
+cd ~/bigbeautifulflag/pi
+bbf-venv/bin/python dev.py
+# ... type fake posts, age them, etc ...
+sudo systemctl start flagpole.service
 ```
 
-None of the dev fakes touch the network or `/dev/ttyACM0`, so this runs fine
-on macOS / Linux / Windows. The fetch loop ticks at ~3 Hz and the motor
-ticker at 10 Hz (both are 1 Hz / 60 s on the real Pi) so clicks in the UI
-show up effectively instantly.
+Stdin commands (also shown on startup):
 
-The "NEW TRUTH" alert frames are synthesized in-process when the real
-`TWEET/FRAME1.png` / `FRAME2.png` aren't present, so the alert animation still
-plays end-to-end in dev.
+| Input           | Action                                                         |
+| --------------- | -------------------------------------------------------------- |
+| `<any text>`    | Post `<any text>` at t=now. Flag drops to 0%, NEW TRUTH alert plays, body scrolls. |
+| `post <body>`   | Same as above, explicit form.                                  |
+| `age <dur>`     | Rewind the last post by `<dur>` (e.g. `30s`, `45m`, `2h`, `5h30m`). Flag steps up accordingly within a second. |
+| `state` / `?`   | Print current percent, countdown, and age of the last post.    |
+| `help` / `h`    | Reprint the banner.                                            |
+| `quit` / `q`    | Exit (Ctrl-C or EOF also work).                                |
+
+No `TRUTHSOCIAL_*` credentials are required; only `ARDUINO_PORT` (same
+default as the main service) and `LOG_LEVEL` are read from the env.
 
 ## systemd
 

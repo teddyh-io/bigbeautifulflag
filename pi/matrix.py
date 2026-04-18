@@ -184,13 +184,12 @@ class MatrixScroller:
         self._stop = threading.Event()
         self._matrix, self._framebuffer = self._init_matrix()
 
-    def _init_matrix(self):
+    @staticmethod
+    def _init_matrix():
         """Initialise Piomatter for a single 64x32 HUB75 panel.
 
         Imported lazily so that the rest of the code (and unit tests) can be
-        exercised on non-Pi hardware without the library installed.  Dev /
-        demo builds override this method to substitute a headless backend
-        (see ``dev.py``).
+        exercised on non-Pi hardware without the library installed.
         """
         import adafruit_blinka_raspberry_pi5_piomatter as piomatter
 
