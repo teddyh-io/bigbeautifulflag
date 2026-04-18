@@ -25,6 +25,10 @@ from PIL import BdfFontFile, Image, ImageDraw, ImageFont
 log = logging.getLogger(__name__)
 
 FONT_PATH = Path(__file__).with_name("fonts") / "tom-thumb.bdf"
+ALERT_FRAME_PATHS = (
+    Path(__file__).parent.parent / "TWEET" / "FRAME1.png",
+    Path(__file__).parent.parent / "TWEET" / "FRAME2.png",
+)
 
 MATRIX_W = 64
 MATRIX_H = 32
@@ -41,6 +45,10 @@ BG_COLOR = (0, 0, 0)
 SCROLL_STEP_MS = 320
 PAUSE_MS = 5000
 FRAME_SLEEP = 0.02  # 50 Hz render loop
+
+# "NEW TRUTH" alert animation shown before a new post scrolls in.
+ALERT_DURATION_S = 5.0
+ALERT_FRAME_MS = 200
 
 
 def _load_font() -> ImageFont.ImageFont:
@@ -59,6 +67,28 @@ def _load_font() -> ImageFont.ImageFont:
             bdf = BdfFontFile.BdfFontFile(f)
         bdf.save(str(FONT_PATH.with_suffix("")))
     return ImageFont.load(str(pil_path))
+
+
+def _load_alert_frames() -> list[np.ndarray]:
+    """Load the NEW TRUTH alert frames as full-panel RGB numpy arrays.
+
+    Missing/mismatched files are skipped with a warning so the service still
+    runs (alerts will just be no-ops).
+    """
+    frames: list[np.ndarray] = []
+    for path in ALERT_FRAME_PATHS:
+        if not path.exists():
+            log.warning("alert: frame missing, skipping: %s", path)
+            continue
+        img = Image.open(path).convert("RGB")
+        if img.size != (MATRIX_W, MATRIX_H):
+            log.warning(
+                "alert: %s is %dx%d, resizing to %dx%d",
+                path.name, img.width, img.height, MATRIX_W, MATRIX_H,
+            )
+            img = img.resize((MATRIX_W, MATRIX_H))
+        frames.append(np.asarray(img, dtype=np.uint8))
+    return frames
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -144,18 +174,23 @@ class MatrixScroller:
 
     def __init__(self) -> None:
         self._font = _load_font()
+        self._alert_frames = _load_alert_frames()
         self._lock = threading.Lock()
         self._image: Image.Image = render_body_image("", self._font)
         self._dirty = True
+        self._pending_image: Image.Image | None = None
+        self._alert_start: float = 0.0
+        self._alert_until: float = 0.0
         self._stop = threading.Event()
         self._matrix, self._framebuffer = self._init_matrix()
 
-    @staticmethod
-    def _init_matrix():
+    def _init_matrix(self):
         """Initialise Piomatter for a single 64x32 HUB75 panel.
 
         Imported lazily so that the rest of the code (and unit tests) can be
-        exercised on non-Pi hardware without the library installed.
+        exercised on non-Pi hardware without the library installed.  Dev /
+        demo builds override this method to substitute a headless backend
+        (see ``dev.py``).
         """
         import adafruit_blinka_raspberry_pi5_piomatter as piomatter
 
@@ -174,17 +209,32 @@ class MatrixScroller:
         )
         return matrix, framebuffer
 
-    def set_body(self, raw_body: str) -> None:
-        """Update the text shown on the matrix (HTML-cleaned + re-wrapped)."""
+    def set_body(self, raw_body: str, *, alert: bool = False) -> None:
+        """Update the text shown on the matrix (HTML-cleaned + re-wrapped).
+
+        If ``alert`` is true *and* we have alert frames loaded, play the
+        alternating "NEW TRUTH" animation for ``ALERT_DURATION_S`` seconds
+        before swapping the scrolling body in.  Otherwise the new body is
+        shown immediately (used for the first fetch after boot).
+        """
         cleaned = clean_body(raw_body)
         img = render_body_image(cleaned, self._font)
+        play_alert = alert and bool(self._alert_frames)
         with self._lock:
-            self._image = img
-            self._dirty = True
+            if play_alert:
+                self._pending_image = img
+                self._alert_start = time.monotonic()
+                self._alert_until = self._alert_start + ALERT_DURATION_S
+            else:
+                self._image = img
+                self._dirty = True
+                self._pending_image = None
+                self._alert_until = 0.0
         log.info(
-            "matrix: new body (%d chars → %dpx tall)",
+            "matrix: new body (%d chars → %dpx tall, alert=%s)",
             len(cleaned),
             img.height,
+            play_alert,
         )
 
     def clear(self) -> None:
@@ -200,6 +250,10 @@ class MatrixScroller:
         State machine: PAUSE_TOP -> SCROLLING -> PAUSE_BOTTOM -> PAUSE_TOP ...
         When the current image is shorter than the panel we just stay in
         PAUSE_TOP forever and only repaint when the text changes.
+
+        A new post with ``alert=True`` temporarily hijacks the loop to flash
+        the two NEW TRUTH frames full-panel for ``ALERT_DURATION_S``, then
+        swaps the pending body in and resumes the scroll state machine.
         """
         PAUSE_TOP, SCROLLING, PAUSE_BOTTOM = 0, 1, 2
         state = PAUSE_TOP
@@ -211,12 +265,26 @@ class MatrixScroller:
             now = time.monotonic()
 
             with self._lock:
+                alert_active = self._pending_image is not None and now < self._alert_until
+                alert_start = self._alert_start
+                if self._pending_image is not None and not alert_active:
+                    # Alert just ended — promote the pending body.
+                    self._image = self._pending_image
+                    self._pending_image = None
+                    self._dirty = True
                 img = self._image
                 if self._dirty:
                     state = PAUSE_TOP
                     y_offset = 0
                     pause_until = now + PAUSE_MS / 1000.0
                     self._dirty = False
+
+            if alert_active:
+                frame_idx = int((now - alert_start) / (ALERT_FRAME_MS / 1000.0)) % len(self._alert_frames)
+                self._framebuffer[:] = self._alert_frames[frame_idx]
+                self._matrix.show()
+                time.sleep(FRAME_SLEEP)
+                continue
 
             max_offset = max(0, img.height - TEXT_H)
 

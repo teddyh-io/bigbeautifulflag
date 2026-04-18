@@ -6,11 +6,14 @@ long without posting on Truth Social, and lowers it again every time he posts.
 
 ## Behaviour
 
-- Poll Truth Social every 5 minutes (configurable).
+- Poll Truth Social every minute (configurable).
 - Flag rises 10% for every 30 minutes of silence, capping at 100%
   (i.e. fully raised after 5 h 30 m of no new posts).
 - Any new post drops the flag back to 0%.
 - A 64x32 RGB matrix scrolls the body of the latest post.
+- When a new post is detected the matrix flashes a "NEW TRUTH" alert
+  (two frames alternating every 200 ms for 5 s) before the new body
+  scrolls in.
 - One HW-069 7-seg displays the current flag % and another counts down the
   seconds until the next 10% step.
 
@@ -24,6 +27,7 @@ arduino/
 pi/
   flagpole.py          # main systemd service
   calibrate.py         # standalone interactive calibration over SSH
+  dev.py               # browser-based dev/demo (no hardware, no Truth Social)
   matrix.py            # Piomatter + tom-thumb BDF scroller
   arduino.py           # serial protocol wrapper for the Uno
   truth.py             # polling + percent/countdown math
@@ -32,7 +36,13 @@ pi/
   systemd/
     flagpole.service   # systemd unit (points at /home/teddyh/bigbeautifulflag/pi)
   requirements.txt
+  requirements-dev.txt # deps for dev.py (no piomatter, no truthbrush)
   .env.example
+
+TWEET/
+  FRAME1.png           # "NEW TRUTH" alert, frame 1 (64x32 RGB)
+  FRAME2.png           # "NEW TRUTH" alert, frame 2 (64x32 RGB)
+  FRAMES.psd           # Photoshop source for the alert frames
 
 Pulley 3D Print/       # mechanical assets (STL/SLDPRT/SCAD)
 README.md
@@ -158,6 +168,39 @@ Keys:
 | 0–9        | Goto 0%, 10%, … 90% (once calibrated) |
 | Q / Esc    | Quit                                  |
 
+## Dev / demo mode
+
+[`pi/dev.py`](pi/dev.py) runs the full service (matrix scroller + fetch loop +
+tick loop + flag-percent math) with three in-process fakes swapped in for the
+hardware-touching parts — no Pi, no Arduino, no Truth Social account needed.
+It serves a small browser UI on `http://localhost:8765/` that shows:
+
+- The 64×32 matrix scaled up (rendered from the same numpy framebuffer the
+  real Piomatter backend would paint).
+- A flagpole graphic animating up/down as the motor percent changes.
+- The two 7-seg displays (flag %, next-step countdown).
+- A live log of the `G` / `P` / `T` commands the service would send the Uno.
+- A form to "post" a new truth, with an "Age (min)" field so you can jump
+  straight to e.g. 100% without waiting 5h30m, and a "Rewind 30 min" button
+  that bumps the flag up one step instantly.
+
+```bash
+cd pi
+python3 -m venv bbf-venv
+bbf-venv/bin/pip install -r requirements-dev.txt
+bbf-venv/bin/python dev.py           # opens http://localhost:8765/
+bbf-venv/bin/python dev.py --help    # --port / --host / --no-browser / --interval
+```
+
+None of the dev fakes touch the network or `/dev/ttyACM0`, so this runs fine
+on macOS / Linux / Windows. The fetch loop ticks at ~3 Hz and the motor
+ticker at 10 Hz (both are 1 Hz / 60 s on the real Pi) so clicks in the UI
+show up effectively instantly.
+
+The "NEW TRUTH" alert frames are synthesized in-process when the real
+`TWEET/FRAME1.png` / `FRAME2.png` aren't present, so the alert animation still
+plays end-to-end in dev.
+
 ## systemd
 
 Install the service so the flagpole starts on boot and restarts on crash.
@@ -199,7 +242,7 @@ All configurable via environment variables (see [pi/.env.example](pi/.env.exampl
 | ---------------------- | ------------------- | ------------------------------------------- |
 | `ARDUINO_PORT`         | `/dev/ttyACM0`      | USB-serial device for the Uno               |
 | `TRUTH_HANDLE`         | `realdonaldtrump`   | Account to watch                            |
-| `POLL_INTERVAL`        | `300`               | Seconds between Truth Social fetches        |
+| `POLL_INTERVAL`        | `60`                | Seconds between Truth Social fetches        |
 | `TRUTHSOCIAL_USERNAME` | — (required)        | Or set `TRUTHSOCIAL_TOKEN` instead          |
 | `TRUTHSOCIAL_PASSWORD` | — (required)        |                                             |
 | `TRUTHSOCIAL_TOKEN`    | —                   | Bearer token alternative                    |
@@ -231,3 +274,12 @@ needs to resend when the target changes (in practice, once per
 *Fixed4x6* (tom-thumb) bitmap font by Brian Swetland. It's converted to
 PIL's native `.pil`/`.pbm` cache at first run (both gitignored); delete
 those files if you ever replace the BDF.
+
+## NEW TRUTH alert frames
+
+[`TWEET/FRAME1.png`](TWEET/FRAME1.png) and
+[`TWEET/FRAME2.png`](TWEET/FRAME2.png) are the two 64x32 RGB frames that
+alternate every 200 ms for 5 seconds whenever a new post is detected, just
+before the body scrolls in.  Replace them with any other pair of 64x32
+PNGs to customise the alert — they're loaded once at service start. If the
+files are missing the service still runs, it just skips the animation.

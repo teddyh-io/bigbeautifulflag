@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from dateutil import parser as date_parse
-
 log = logging.getLogger(__name__)
 
 HALF_HOUR = 1800  # seconds
@@ -56,6 +54,7 @@ class TruthPoller:
         return self._api
 
     def fetch(self) -> Optional[Snapshot]:
+        from dateutil import parser as date_parse
         api = self._api_client()
         latest = None
         for status in api.pull_statuses(self._handle):
