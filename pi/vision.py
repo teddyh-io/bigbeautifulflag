@@ -100,7 +100,7 @@ Format guidance:
     Image of <brief description>[, with caption "<text>"]
 
 Output plain ASCII only (no emojis, no smart quotes, no em dashes), no
-preamble or trailing commentary, max 280 characters.
+preamble or trailing commentary.
 """
 
 _PROMPT_VIDEO = """\
