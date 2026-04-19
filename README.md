@@ -212,6 +212,13 @@ the vision fallback both call the upstream APIs:
 - The image-only vision fallback uses `OPENAI_API_KEY`. Without it,
   image-only posts just scroll `(no post)` instead of a description.
 
+`dev.py` automatically loads `/etc/flagpole.env` (the same file
+`flagpole.service` uses via `EnvironmentFile=`), so on the Pi the same
+secrets you already configured for the systemd service are picked up
+without any extra steps. A developer-local `.env` next to the script (or
+anywhere up the cwd) takes precedence over `/etc/flagpole.env` if you
+want to override anything for testing.
+
 `ARDUINO_PORT` and `LOG_LEVEL` are honored as in the main service.
 
 ## systemd

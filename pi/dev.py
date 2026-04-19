@@ -36,6 +36,11 @@ from vision import describe_media
 
 log = logging.getLogger("dev")
 
+# Same path systemd uses (EnvironmentFile= in pi/systemd/flagpole.service).
+# Loaded automatically so URL-paste / vision auth "just works" on the Pi
+# without having to copy secrets next to the script.
+SYSTEM_ENV_FILE = "/etc/flagpole.env"
+
 
 BANNER = """\
 ──────────────────────────────────────
@@ -297,8 +302,26 @@ def _stdin_loop(
         )
 
 
-def main() -> int:
+def _load_env() -> bool:
+    """Populate os.environ from the same sources the live service sees.
+
+    ``load_dotenv()`` only fills variables that aren't already set, so the
+    ordering here is: a developer-local ``.env`` (walked up from the cwd)
+    wins over the production secrets file at ``/etc/flagpole.env``, which
+    in turn wins over a totally empty environment. Returns True if the
+    system env file was found and loaded (logged once basicConfig is up).
+    """
     load_dotenv()
+    if os.path.isfile(SYSTEM_ENV_FILE):
+        load_dotenv(SYSTEM_ENV_FILE)
+        return True
+    return False
+
+
+def main() -> int:
+    # Load env BEFORE argparse / basicConfig so ARDUINO_PORT and LOG_LEVEL
+    # picked up from /etc/flagpole.env take effect.
+    loaded_system_env = _load_env()
 
     parser = argparse.ArgumentParser(description="Flagpole dev / demo mode")
     parser.add_argument(
@@ -313,6 +336,8 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    if loaded_system_env:
+        log.info("env: loaded %s", SYSTEM_ENV_FILE)
     log.info("starting dev mode — port=%s", args.port)
 
     arduino = Arduino(args.port)
