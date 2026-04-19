@@ -5,6 +5,12 @@ image (or, for videos, the still ``preview_url`` thumbnail — we never
 download the mp4 itself) to gpt-4o-mini and scroll the returned
 description on the LED matrix in place of the missing body.
 
+The Truth Social CDN serves images fine to browsers but blocks OpenAI's
+backend image fetcher (returns 400 ``invalid_image_url``), so we pull the
+bytes ourselves with a browser User-Agent, downscale + re-encode them as
+JPEG with Pillow to keep the request small, and pass them inline to
+OpenAI as a base64 ``data:`` URL.
+
 Configuration (env vars):
 
 ==================  ============================================
@@ -17,15 +23,36 @@ Configuration (env vars):
 
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import os
 import threading
+import urllib.error
+import urllib.request
 from typing import Literal
+
+from PIL import Image
 
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4o-mini"
 MAX_OUTPUT_CHARS = 280
+
+# Browser-ish UA so Truth Social's CDN doesn't block us. Same string
+# truthbrush impersonates with curl_cffi.
+_FETCH_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_2_1) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+)
+_FETCH_TIMEOUT_S = 10
+# Hard cap on bytes we'll pull from the CDN before giving up — one rogue
+# 50 MB image shouldn't be able to wedge the service.
+_FETCH_MAX_BYTES = 18 * 1024 * 1024
+# Long-edge cap before we hand the JPEG to OpenAI. 1024px is well above
+# what the model needs to read overlay text and keeps token cost down
+# (gpt-4o-mini bills per ~512px tile).
+_THUMBNAIL_MAX_PX = 1024
 
 _client_lock = threading.Lock()
 _client = None
@@ -99,6 +126,56 @@ preamble or trailing commentary, max 280 characters.
 """
 
 
+def _fetch_image_data_url(url: str) -> str | None:
+    """Download an image and return a base64 ``data:image/jpeg;base64,...`` URI.
+
+    Returns ``None`` (with a logged warning) if the download fails, the
+    payload exceeds ``_FETCH_MAX_BYTES``, or Pillow can't decode it. We
+    always re-encode as JPEG so the data URL has a predictable
+    content-type and so animated GIFs / WebPs collapse to a single still.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _FETCH_USER_AGENT,
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_S) as resp:
+            raw = resp.read(_FETCH_MAX_BYTES + 1)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        log.warning("vision: image fetch failed for %s: %s", url, exc)
+        return None
+
+    if len(raw) > _FETCH_MAX_BYTES:
+        log.warning(
+            "vision: image at %s exceeds %d bytes, skipping",
+            url, _FETCH_MAX_BYTES,
+        )
+        return None
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception as exc:
+        log.warning("vision: image decode failed for %s: %s", url, exc)
+        return None
+
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.thumbnail((_THUMBNAIL_MAX_PX, _THUMBNAIL_MAX_PX), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85, optimize=True)
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    log.debug(
+        "vision: fetched %s -> %dx%d JPEG (%d bytes -> %d b64)",
+        url, img.width, img.height, buf.tell(), len(encoded),
+    )
+    return f"data:image/jpeg;base64,{encoded}"
+
+
 def describe_media(
     url: str,
     *,
@@ -116,6 +193,10 @@ def describe_media(
     if not url:
         return None
 
+    data_url = _fetch_image_data_url(url)
+    if data_url is None:
+        return None
+
     prompt = _PROMPT_VIDEO if kind == "video" else _PROMPT_IMAGE
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
 
@@ -126,7 +207,7 @@ def describe_media(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }],
             max_tokens=200,
