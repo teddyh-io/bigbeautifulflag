@@ -14,6 +14,12 @@ long without posting on Truth Social, and lowers it again every time he posts.
 - When a new post is detected the matrix flashes a "NEW TRUTH" alert
   (two frames alternating every 200 ms for 5 s) before the new body
   scrolls in.
+- Caption-less truths whose only content is an image or video are
+  described via OpenAI's vision API (`gpt-4o-mini` by default) and the
+  description is scrolled in place of the missing body. Images get an
+  `Image of …` line; videos get a `Video of …` line generated from the
+  preview thumbnail (or the literal `[Video]` if the thumbnail is
+  uninformative). Disabled when `OPENAI_API_KEY` isn't set.
 - One HW-069 7-seg displays the current flag % and another counts down the
   seconds until the next 10% step.
 
@@ -31,6 +37,7 @@ pi/
   matrix.py            # Piomatter + tom-thumb BDF scroller
   arduino.py           # serial protocol wrapper for the Uno
   truth.py             # polling + percent/countdown math
+  vision.py            # OpenAI gpt-4o-mini wrapper for caption-less truths
   fonts/
     tom-thumb.bdf      # MIT-licensed 4x6 pixel font
   systemd/
@@ -191,13 +198,21 @@ Stdin commands (also shown on startup):
 | --------------- | -------------------------------------------------------------- |
 | `<any text>`    | Post `<any text>` at t=now. Flag drops to 0%, NEW TRUTH alert plays, body scrolls. |
 | `post <body>`   | Same as above, explicit form.                                  |
+| `<truth url>`   | Pull a real post by URL (e.g. `https://truthsocial.com/@realDonaldTrump/116428386907912654`) and inject it as a fresh truth. Image-only posts get the same OpenAI vision description as the live service. |
 | `age <dur>`     | Rewind the last post by `<dur>` (e.g. `30s`, `45m`, `2h`, `5h30m`). Flag steps up accordingly within a second. |
 | `state` / `?`   | Print current percent, countdown, and age of the last post.    |
 | `help` / `h`    | Reprint the banner.                                            |
 | `quit` / `q`    | Exit (Ctrl-C or EOF also work).                                |
 
-No `TRUTHSOCIAL_*` credentials are required; only `ARDUINO_PORT` (same
-default as the main service) and `LOG_LEVEL` are read from the env.
+For typing fake bodies you don't need any credentials, but URL-paste and
+the vision fallback both call the upstream APIs:
+
+- Truth Social fetch uses `TRUTHSOCIAL_TOKEN` (or `TRUTHSOCIAL_USERNAME`
+  + `TRUTHSOCIAL_PASSWORD`) — same env vars as the main service.
+- The image-only vision fallback uses `OPENAI_API_KEY`. Without it,
+  image-only posts just scroll `(no post)` instead of a description.
+
+`ARDUINO_PORT` and `LOG_LEVEL` are honored as in the main service.
 
 ## systemd
 
@@ -244,6 +259,8 @@ All configurable via environment variables (see [pi/.env.example](pi/.env.exampl
 | `TRUTHSOCIAL_USERNAME` | — (required)        | Or set `TRUTHSOCIAL_TOKEN` instead          |
 | `TRUTHSOCIAL_PASSWORD` | — (required)        |                                             |
 | `TRUTHSOCIAL_TOKEN`    | —                   | Bearer token alternative                    |
+| `OPENAI_API_KEY`       | —                   | Optional. Enables vision description of caption-less image/video truths. |
+| `OPENAI_MODEL`         | `gpt-4o-mini`       | Vision model used for the description call. |
 | `LOG_LEVEL`            | `INFO`              | Any `logging` level name                    |
 
 ## Serial protocol (Pi → Uno)

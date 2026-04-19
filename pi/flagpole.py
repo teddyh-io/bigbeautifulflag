@@ -32,8 +32,9 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from arduino import Arduino
-from matrix import MatrixScroller
+from matrix import MatrixScroller, clean_body
 from truth import TruthPoller, compute
+from vision import describe_media
 
 
 def _configure_logging() -> None:
@@ -78,7 +79,8 @@ def _fetch_loop(
     poll.
     """
     log = logging.getLogger("fetch")
-    last_body: str | None = None
+    last_id: str | None = None
+    seen_first = False
 
     while not stop.is_set():
         try:
@@ -88,13 +90,27 @@ def _fetch_loop(
             snap = None
 
         if snap is not None:
-            if snap.body_html != last_body:
+            if snap.id != last_id:
+                # Decide what to scroll: the post body if it has any text,
+                # otherwise an OpenAI vision description of the attached
+                # image (or video preview thumbnail). Vision failures —
+                # missing key, network, etc. — fall back to the empty body
+                # so the matrix shows "(no post)" as before.
+                display_body = snap.body_html
+                if not clean_body(snap.body_html) and snap.media_url:
+                    description = describe_media(
+                        snap.media_url,
+                        kind=snap.media_kind or "image",
+                    )
+                    if description:
+                        display_body = description
+
                 # Only flash the "NEW TRUTH" alert for genuinely new posts —
                 # the first fetch after boot just loads whatever the latest
                 # post already was, so it shows up directly.
-                is_new_post = last_body is not None
-                scroller.set_body(snap.body_html, alert=is_new_post)
-                last_body = snap.body_html
+                scroller.set_body(display_body, alert=seen_first)
+                last_id = snap.id
+                seen_first = True
             with state.lock:
                 state.post_time = snap.created_at
 

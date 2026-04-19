@@ -29,8 +29,9 @@ from dotenv import load_dotenv
 
 from arduino import Arduino
 from flagpole import _PollState, _tick_loop
-from matrix import MatrixScroller
+from matrix import MatrixScroller, clean_body
 from truth import compute
+from vision import describe_media
 
 
 log = logging.getLogger("dev")
@@ -42,6 +43,10 @@ BANNER = """\
 ──────────────────────────────────────
   <text>       Post <text> now (resets flag, plays NEW TRUTH)
   post <body>  Same as above, explicit form
+  <truth url>  Pull a real post by URL and inject it as a new truth
+               e.g. https://truthsocial.com/@realDonaldTrump/1234...
+               (image-only posts get OpenAI vision-described, same as
+               the live service)
   age <dur>    Rewind last post by <dur> — e.g. 30s, 45m, 2h, 5h30m
   state / ?    Print current percent, countdown, last post age
   help / h     Show this banner
@@ -51,6 +56,11 @@ BANNER = """\
 
 
 _DUR_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+_POST_URL_RE = re.compile(
+    r"^https?://(?:www\.)?truthsocial\.com/@([^/\s]+)/(\d+)(?:[/?#]|$)",
+    re.IGNORECASE,
+)
+_DEFAULT_HANDLE = "realdonaldtrump"
 
 
 def _parse_duration(s: str) -> timedelta | None:
@@ -89,6 +99,122 @@ def _print_state(state: _PollState) -> None:
         f"countdown={'—' if countdown < 0 else f'{countdown}s'}",
         flush=True,
     )
+
+
+def _parse_post_url(line: str) -> tuple[str, str] | None:
+    """Return ``(handle, post_id)`` for a Truth Social post URL, else ``None``."""
+    m = _POST_URL_RE.match(line.strip())
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _fetch_status_by_id(post_id: str) -> dict | None:
+    """Fetch a single Truth Social status by ID via truthbrush.
+
+    truthbrush has no public single-status helper, so we hit the underlying
+    Mastodon-compatible endpoint through ``Api._get``. ``TRUTHSOCIAL_TOKEN``
+    in the env (loaded by truthbrush itself at import) is enough to auth;
+    we fall back to a no-op ``lookup()`` to force a username/password login
+    when only those are set.
+    """
+    try:
+        from truthbrush.api import Api
+    except ImportError as exc:
+        log.warning("truth: truthbrush not installed: %s", exc)
+        return None
+
+    api = Api()
+    if api.auth_id is None:
+        try:
+            api.lookup(_DEFAULT_HANDLE)
+        except Exception as exc:
+            log.warning("truth: login failed: %s", exc)
+            return None
+
+    try:
+        status = api._get(f"/v1/statuses/{post_id}")
+    except Exception as exc:
+        log.warning("truth: GET /v1/statuses/%s failed: %s", post_id, exc)
+        return None
+
+    if not isinstance(status, dict) or "content" not in status:
+        log.warning("truth: unexpected response for %s: %r", post_id, status)
+        return None
+    return status
+
+
+def _resolve_display_body(status: dict) -> str:
+    """Pick the matrix body for a fetched status.
+
+    Mirrors the behaviour of ``flagpole._fetch_loop``: if the post has
+    real text, use it; if it's image/video only and we have a vision key,
+    fall back to the OpenAI description; otherwise return the empty body
+    so the matrix shows the "(no post)" placeholder.
+    """
+    body = status.get("content", "") or ""
+    if clean_body(body):
+        return body
+
+    media_url: str | None = None
+    media_kind: str | None = None
+    for att in status.get("media_attachments") or []:
+        att_type = att.get("type")
+        if att_type == "image" and att.get("url"):
+            media_url = att["url"]
+            media_kind = "image"
+            break
+        if att_type in ("video", "gifv") and att.get("preview_url"):
+            media_url = att["preview_url"]
+            media_kind = "video"
+            break
+
+    if not media_url:
+        return body
+
+    description = describe_media(media_url, kind=media_kind or "image")
+    return description if description else body
+
+
+def _inject_from_url(
+    scroller: MatrixScroller,
+    state: _PollState,
+    line: str,
+) -> bool:
+    """If ``line`` is a Truth Social post URL, fetch it and inject it.
+
+    Returns True iff the line looked like a URL we tried to handle (so the
+    caller can skip the plain-text-post fallback). Network/auth/vision
+    failures are reported on stdout but still return True — the user
+    pasted a URL on purpose, so we don't want to silently treat it as
+    post body text.
+    """
+    parsed = _parse_post_url(line)
+    if parsed is None:
+        return False
+
+    handle, post_id = parsed
+    print(f"fetching @{handle}/{post_id} ...", flush=True)
+    status = _fetch_status_by_id(post_id)
+    if status is None:
+        print(f"  could not fetch post {post_id} (see log)", flush=True)
+        return True
+
+    display = _resolve_display_body(status)
+    _inject_post(scroller, state, display, alert=True)
+
+    rendered_chars = len(clean_body(display))
+    media_note = ""
+    if not clean_body(status.get("content", "") or ""):
+        kinds = [att.get("type") for att in (status.get("media_attachments") or [])]
+        if kinds:
+            media_note = f" [media: {', '.join(kinds)}; vision={'on' if rendered_chars else 'off'}]"
+    print(
+        f"posted @{handle}/{post_id} ({rendered_chars} chars on matrix)"
+        f"{media_note} — flag reset, NEW TRUTH alert playing",
+        flush=True,
+    )
+    return True
 
 
 def _stdin_loop(
@@ -158,6 +284,9 @@ def _stdin_loop(
                 print("usage: post <body>", flush=True)
                 continue
         else:
+            # A bare Truth Social URL → fetch the real post and inject it.
+            if _inject_from_url(scroller, state, line):
+                continue
             # Any other line is treated as the post body verbatim.
             body = line
 

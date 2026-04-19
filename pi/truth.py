@@ -23,10 +23,16 @@ HALF_HOUR = 1800  # seconds
 class Snapshot:
     """One polling result the service needs to act on."""
 
+    id: str
     body_html: str
     created_at: datetime
     percent: int
     countdown_seconds: int   # -1 when flag is fully raised
+    # First usable media attachment, if any. ``media_kind`` is "image"
+    # (``url`` is the full-res image) or "video" (``url`` is the still
+    # ``preview_url`` thumbnail; we never download the mp4).
+    media_url: str | None = None
+    media_kind: str | None = None
 
 
 def compute(now: datetime, post_time: datetime) -> tuple[int, int]:
@@ -73,16 +79,36 @@ class TruthPoller:
         pct, countdown = compute(now, post_time)
         body = latest.get("content", "") or ""
 
+        # First usable media attachment becomes the OpenAI vision input
+        # when the body is empty. Images use their full-res ``url``;
+        # videos/gifvs fall back to the still ``preview_url`` thumbnail.
+        media_url: str | None = None
+        media_kind: str | None = None
+        for att in latest.get("media_attachments") or []:
+            att_type = att.get("type")
+            if att_type == "image" and att.get("url"):
+                media_url = att["url"]
+                media_kind = "image"
+                break
+            if att_type in ("video", "gifv") and att.get("preview_url"):
+                media_url = att["preview_url"]
+                media_kind = "video"
+                break
+
         log.info(
-            "truth: @%s last post %.0fm ago → flag=%d%%, next-step in %ds",
+            "truth: @%s last post %.0fm ago → flag=%d%%, next-step in %ds%s",
             self._handle,
             (now - post_time).total_seconds() / 60,
             pct,
             countdown,
+            f" (media={media_kind})" if media_kind else "",
         )
         return Snapshot(
+            id=str(latest["id"]),
             body_html=body,
             created_at=post_time,
             percent=pct,
             countdown_seconds=countdown,
+            media_url=media_url,
+            media_kind=media_kind,
         )
