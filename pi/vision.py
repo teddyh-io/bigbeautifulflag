@@ -37,7 +37,6 @@ from PIL import Image
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4o-mini"
-MAX_OUTPUT_CHARS = 280
 
 # Browser-ish UA so Truth Social's CDN doesn't block us. Same string
 # truthbrush impersonates with curl_cffi.
@@ -122,7 +121,7 @@ If the thumbnail is a black screen, blank, or otherwise too uninformative
 to describe, output exactly "[Video]" (with the brackets) and nothing else.
 
 Output plain ASCII only (no emojis, no smart quotes, no em dashes), no
-preamble or trailing commentary, max 280 characters.
+preamble or trailing commentary.
 """
 
 
@@ -210,7 +209,6 @@ def describe_media(
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }],
-            max_tokens=200,
             temperature=0.2,
         )
     except Exception as exc:
@@ -226,9 +224,6 @@ def describe_media(
     if not text:
         log.info("vision: empty response from %s for %s", model, kind)
         return None
-
-    if len(text) > MAX_OUTPUT_CHARS:
-        text = text[:MAX_OUTPUT_CHARS]
 
     log.info("vision: described %s (%d chars): %s", kind, len(text), text)
     return text
