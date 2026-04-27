@@ -91,19 +91,22 @@ def _fetch_loop(
 
         if snap is not None:
             if snap.id != last_id:
-                # Decide what to scroll: the post body if it has any text,
-                # otherwise an OpenAI vision description of the attached
-                # image (or video preview thumbnail). Vision failures —
-                # missing key, network, etc. — fall back to the empty body
-                # so the matrix shows "(no post)" as before.
+                # Build what to scroll. Every post with attached media gets
+                # an OpenAI vision description; if the post also has body
+                # text, the description is appended after it on a new line.
+                # Vision failures — missing key, network, etc. — silently
+                # fall back to the body alone (or "(no post)" if empty).
                 display_body = snap.body_html
-                if not clean_body(snap.body_html) and snap.media_url:
+                if snap.media_url:
                     description = describe_media(
                         snap.media_url,
                         kind=snap.media_kind or "image",
                     )
                     if description:
-                        display_body = description
+                        if clean_body(snap.body_html):
+                            display_body = f"{snap.body_html}\n{description}"
+                        else:
+                            display_body = description
 
                 # Only flash the "NEW TRUTH" alert for genuinely new posts —
                 # the first fetch after boot just loads whatever the latest

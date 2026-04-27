@@ -54,6 +54,11 @@ class Arduino:
             try:
                 line = self._ser.readline()
             except Exception as exc:
+                # close() racing with readline() yanks the port's internal
+                # buffers and surfaces as a confusing TypeError; swallow it
+                # silently if we're already on the way out.
+                if self._stop.is_set():
+                    return
                 log.warning("arduino: read failed: %s", exc)
                 time.sleep(0.5)
                 continue
@@ -76,6 +81,10 @@ class Arduino:
 
     def close(self) -> None:
         self._stop.set()
+        # Let the reader unwind first so it doesn't race with the port
+        # being closed (readline() has a 0.5s timeout, so this is bounded).
+        if self._reader.is_alive():
+            self._reader.join(timeout=1.0)
         try:
             self._ser.close()
         except Exception:

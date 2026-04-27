@@ -14,12 +14,12 @@ long without posting on Truth Social, and lowers it again every time he posts.
 - When a new post is detected the matrix flashes a "NEW TRUTH" alert
   (two frames alternating every 200 ms for 5 s) before the new body
   scrolls in.
-- Caption-less truths whose only content is an image or video are
-  described via OpenAI's vision API (`gpt-4o-mini` by default) and the
-  description is scrolled in place of the missing body. Images get an
-  `Image of …` line; videos get a `Video of …` line generated from the
-  preview thumbnail (or the literal `[Video]` if the thumbnail is
-  uninformative). Disabled when `OPENAI_API_KEY` isn't set.
+- Truths with attached media are described via OpenAI's vision API
+  (`gpt-4o-mini` by default) and the description is appended after the
+  body text (or shown by itself if the truth has no caption). Images
+  produce an `Image of …` line; videos produce a `Video of …` line
+  generated from the preview thumbnail (or the literal `[Video]` if the
+  thumbnail is uninformative). Disabled when `OPENAI_API_KEY` isn't set.
 - One HW-069 7-seg displays the current flag % and another counts down the
   seconds until the next 10% step.
 
