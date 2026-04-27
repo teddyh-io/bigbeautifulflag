@@ -50,8 +50,8 @@ BANNER = """\
   post <body>  Same as above, explicit form
   <truth url>  Pull a real post by URL and inject it as a new truth
                e.g. https://truthsocial.com/@realDonaldTrump/1234...
-               (image-only posts get OpenAI vision-described, same as
-               the live service)
+               (any post with media gets an OpenAI vision description
+               appended, same as the live service)
   age <dur>    Rewind last post by <dur> — e.g. 30s, 45m, 2h, 5h30m
   state / ?    Print current percent, countdown, last post age
   help / h     Show this banner
@@ -153,13 +153,11 @@ def _resolve_display_body(status: dict) -> str:
     """Pick the matrix body for a fetched status.
 
     Mirrors the behaviour of ``flagpole._fetch_loop``: if the post has
-    real text, use it; if it's image/video only and we have a vision key,
-    fall back to the OpenAI description; otherwise return the empty body
-    so the matrix shows the "(no post)" placeholder.
+    media attached, we run an OpenAI vision description and append it
+    after the body text (or use it alone when there's no caption). If
+    vision is unavailable, we fall through to the original body.
     """
     body = status.get("content", "") or ""
-    if clean_body(body):
-        return body
 
     media_url: str | None = None
     media_kind: str | None = None
@@ -178,7 +176,11 @@ def _resolve_display_body(status: dict) -> str:
         return body
 
     description = describe_media(media_url, kind=media_kind or "image")
-    return description if description else body
+    if not description:
+        return body
+    if clean_body(body):
+        return f"{body}\n{description}"
+    return description
 
 
 def _inject_from_url(
@@ -210,10 +212,11 @@ def _inject_from_url(
 
     rendered_chars = len(clean_body(display))
     media_note = ""
-    if not clean_body(status.get("content", "") or ""):
-        kinds = [att.get("type") for att in (status.get("media_attachments") or [])]
-        if kinds:
-            media_note = f" [media: {', '.join(kinds)}; vision={'on' if rendered_chars else 'off'}]"
+    kinds = [att.get("type") for att in (status.get("media_attachments") or [])]
+    if kinds:
+        body_chars = len(clean_body(status.get("content", "") or ""))
+        described = rendered_chars > body_chars
+        media_note = f" [media: {', '.join(kinds)}; vision={'on' if described else 'off'}]"
     print(
         f"posted @{handle}/{post_id} ({rendered_chars} chars on matrix)"
         f"{media_note} — flag reset, NEW TRUTH alert playing",
