@@ -37,10 +37,10 @@
 #define JOG_COARSE_MS 1000
 
 // ── 7-segment displays ────────────────────────────────────────────────────
-#define SEG1_CLK 2
-#define SEG1_DIO 3
-#define SEG2_CLK 4
-#define SEG2_DIO 5
+#define SEG1_CLK 4
+#define SEG1_DIO 5
+#define SEG2_CLK 2
+#define SEG2_DIO 3
 #define SEG_BRIGHTNESS 4   // 0..7
 
 TM1637Display seg1(SEG1_CLK, SEG1_DIO);
